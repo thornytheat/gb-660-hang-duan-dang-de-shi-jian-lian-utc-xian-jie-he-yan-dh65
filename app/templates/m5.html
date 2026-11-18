@@ -1,27 +1,92 @@
 {% extends "base.html" %}
 {% block content %}
 <section class="kpis">
-  <div class="kpi"><b>UTC 时刻</b><strong>3</strong><small>条</small></div>
-  <div class="kpi"><b>通过</b><strong>1</strong><small>条</small></div>
-  <div class="kpi"><b>隔离</b><strong>2</strong><small>条</small></div>
+  <div class="kpi"><b>候选 UTC 链</b><strong id="kpi-chains">2</strong><small>条</small></div>
+  <div class="kpi"><b>已判定</b><strong id="kpi-determined">1</strong><small>条</small></div>
+  <div class="kpi"><b>待确认</b><strong id="kpi-pending">1</strong><small>条</small></div>
   <div class="kpi"><b>规则版</b><strong>1.5</strong><small>v</small></div>
 </section>
 <div class="grid grid--split">
   <section class="panel">
-    <div class="panel__head"><h2>衔接判定</h2><span class="state state--ok">通过</span></div>
+    <div class="panel__head"><h2>衔接判定</h2><span class="state state--ok">UTC 航链复核</span></div>
     <div class="panel__body panel__body--scroll">
-      <table class="ledger"><thead><tr><th>序号</th><th>业务键</th><th>状态</th><th class="num">值</th></tr></thead>
-      <tbody>{% for row in rows %}<tr><td class="num">{{ loop.index }}</td><td>{{ row.key }}</td><td>{{ row.status }}</td><td class="num">{{ row.value }}</td></tr>{% endfor %}</tbody></table>
+      <table class="ledger" id="connections-table">
+        <thead><tr><th>序号</th><th>连接</th><th>状态</th><th>结论</th><th class="num">等待(分钟)</th><th class="num">MCT</th></tr></thead>
+        <tbody>
+        {% for row in rows %}
+        <tr class="ledger__row {% if row.status == '待确认' %}is-pending{% else %}is-determined{% endif %}">
+          <td class="num">{{ loop.index }}</td><td>{{ row.key }}</td>
+          <td><span class="badge {% if row.status == '待确认' %}badge--pending{% else %}badge--ok{% endif %}">{{ row.status }}</span></td>
+          <td>{{ row.value }}</td><td class="num">—</td><td class="num">—</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
     </div>
   </section>
   <section class="panel panel--evidence">
-    <div class="panel__head"><h2>证据</h2><span class="panel__meta">6 条</span></div>
-    <div class="panel__body"><div class="evidence"><b>RUN-660-5</b><span>LINE 6</span><code>/api/connections/check</code></div><pre id="result">等待运行</pre></div>
+    <div class="panel__head"><h2>证据 / 台账</h2><span class="panel__meta" id="run-meta">等待运行</span></div>
+    <div class="panel__body">
+      <div class="evidence"><b>RUN-660-5</b><span>整链等待 · 半开窗口</span><code>/api/connections/check-chain</code></div>
+      <pre id="result">等待运行</pre>
+      <div class="actions">
+        <button class="btn" id="confirm-fold" type="button">模拟航司确认 fold=1</button>
+        <button class="btn" id="confirm-late" type="button">模拟航司晚到确认</button>
+      </div>
+    </div>
   </section>
   <section class="panel panel--status">
-    <div class="panel__head"><h2>原因分布</h2><span class="panel__meta">2 类</span></div>
-    <div class="panel__body"><div class="bar"><i style="width:79%"></i></div><div class="legend"><span>采纳 3</span><span>隔离 2</span></div></div>
+    <div class="panel__head"><h2>判定纪律</h2><span class="panel__meta">候选一致才判定</span></div>
+    <div class="panel__body">
+      <div class="legend"><span class="badge badge--ok">已判定</span><span>所有候选 UTC 链结论一致</span></div>
+      <div class="legend"><span class="badge badge--pending">待确认</span><span>候选结论分叉，挂起等航司</span></div>
+      <div class="legend"><span class="badge badge--stale">已失效</span><span>晚到确认后旧判定作废重算</span></div>
+    </div>
   </section>
 </div>
+<script>
+const resultBox = document.querySelector("#result");
+const feedback = document.querySelector("#feedback");
+function badgeClass(decision){ return decision === "PENDING_CONFIRMATION" ? "badge--pending" : "badge--ok"; }
+function label(decision){ return decision === "PENDING_CONFIRMATION" ? "待确认" : "已判定"; }
+async function postJson(url, body){
+  const response = await fetch(url, {method:"POST", headers:{"content-type":"application/json"}, body: JSON.stringify(body || {})});
+  const data = await response.json();
+  if(!response.ok) throw new Error(data.detail?.message || "请求失败");
+  return data;
+}
+async function renderBoard(){
+  const data = await postJson("/api/connections/check-chain", {});
+  document.querySelector("#run-meta").textContent = data.run_id;
+  document.querySelector("#kpi-chains").textContent = data.candidate_chains;
+  const pending = data.connections.filter(c => c.decision === "PENDING_CONFIRMATION").length;
+  document.querySelector("#kpi-pending").textContent = pending;
+  document.querySelector("#kpi-determined").textContent = data.connections.length - pending;
+  const tbody = document.querySelector("#connections-table tbody");
+  tbody.innerHTML = data.connections.map((c, i) => `
+    <tr class="ledger__row ${c.decision === "PENDING_CONFIRMATION" ? "is-pending" : "is-determined"}">
+      <td class="num">${i + 1}</td><td>${c.connection_key}</td>
+      <td><span class="badge ${badgeClass(c.decision)}">${label(c.decision)}</span></td>
+      <td>${c.verdicts.join(" / ")}</td>
+      <td class="num">${c.decision === "PENDING_CONFIRMATION" ? (c.wait_minutes_min + " / " + c.wait_minutes_max) : c.wait_minutes}</td>
+      <td class="num">${c.required_minutes ?? "—"}</td>
+    </tr>`).join("");
+  resultBox.textContent = JSON.stringify(data.board, null, 2);
+  feedback.textContent = "已完成";
+  return data.run_id;
+}
+document.querySelector("#confirm-fold")?.addEventListener("click", async () => {
+  const runId = document.querySelector("#run-meta").textContent;
+  const data = await postJson("/api/connections/confirm", {run_id: runId, kind: "fold", leg_key: "BA185|2026-10-31|LHR|JFK", fold: 1});
+  resultBox.textContent = JSON.stringify(data.board, null, 2); feedback.textContent = "fold 已确认并重算";
+  renderBoard();
+});
+document.querySelector("#confirm-late")?.addEventListener("click", async () => {
+  const runId = document.querySelector("#run-meta").textContent;
+  const data = await postJson("/api/connections/confirm", {run_id: runId, kind: "late_arrival", leg_key: "BA185|2026-10-31|LHR|JFK", arrival_utc: "2026-11-01T07:00:00Z"});
+  resultBox.textContent = JSON.stringify({note: data.superseded_note, board: data.board, history: data.history}, null, 2);
+  feedback.textContent = "晚到确认：旧判定已失效"; renderBoard();
+});
+renderBoard().catch((error) => { resultBox.textContent = error.message; feedback.textContent = "失败，可重试"; });
+</script>
 {% endblock %}
-

@@ -1,0 +1,16 @@
+{
+  "fold_confirmation": {
+    "run_id": "由 /api/connections/check-chain 返回的 run_id 替换",
+    "kind": "fold",
+    "leg_key": "BA185|2026-10-31|LHR|JFK",
+    "fold": 1,
+    "note": "航司确认 DST 回拨重叠时刻采用较晚的 UTC 解释（fold=1）；fold=0 为较早解释"
+  },
+  "late_arrival_confirmation": {
+    "run_id": "由 /api/connections/check-chain 返回的 run_id 替换",
+    "kind": "late_arrival",
+    "leg_key": "BA185|2026-10-31|LHR|JFK",
+    "arrival_utc": "2026-11-01T07:00:00Z",
+    "note": "航司晚到确认的新到达 UTC；旧衔接判定立即失效并按整条 UTC 航链重算"
+  }
+}
